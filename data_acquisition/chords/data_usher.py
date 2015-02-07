@@ -45,6 +45,14 @@ def acquire_db_song_chords():
 #            os.execl(python, python, * sys.argv)
 
 
+def acquire_db_song_chords(failed_attempts ):
+    """
+    Acquires chords for songs in the db who don't have any yet, querying the db in batches for such songs.
+    """
+    # randomize fetch attempts!!!
+
+
+
 def acquire_song_chords(title, artist):
     """
     Acquires chords for one song, assuming it exists in database and has no chords saved yet.

@@ -8,7 +8,7 @@ import datetime
 def standardize_tag(tag):
     """convert a tag to standard format, so that tags with multiple names (e.g. rock, Rock) will not be treated
     as multiple tags"""
-    return ' '.join(sorted(tag.lower().split()))
+    return ' '.join(sorted(tag.lower().replace('_', ' ').replace('-', ' ').split()))
 
 
 def read_last_fm_tags(last_home):
