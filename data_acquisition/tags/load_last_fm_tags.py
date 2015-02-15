@@ -3,6 +3,7 @@ import os
 import time
 import conf
 import datetime
+import MySQLdb
 
 
 def standardize_tag(tag):
@@ -13,7 +14,7 @@ def standardize_tag(tag):
 
 def read_last_fm_tags(last_home):
     """
-    read the last.fm s ong tags dataset, and return a dictionary, where the keys
+    read the last.fm song tags dataset, and return a dictionary, where the keys
     are (song_title,artist) tuples, and the values are tag sets.
     The dataset is formatted in nested subdirectories, where each file contains
     one json line, formatted as a dictionary, with "title","artist" and "tags"
@@ -37,7 +38,7 @@ def read_last_fm_tags(last_home):
                 if certain_tags:
                     number_of_songs_with_tags += 1
                 average_tags_per_song += len(certain_tags)
-                last_songs[(song_data['title'], song_data['artist'])]= certain_tags
+                last_songs[(song_data['title'], song_data['artist'])] = certain_tags
             if not number_of_songs % 20000:
                 print "songs_read={}".format(number_of_songs)
     average_tags_per_song /= float(number_of_songs)
@@ -65,39 +66,52 @@ def last_fm_tags_iterator():
             with open(os.path.join(root,song_file_path)) as song_file:
                 song_data = json.loads(song_file.readline())
                 # if song_data['tags']:
-                certain_tags = {standardize_tag(tag) for tag,certainty in song_data['tags'] if \
-                    int(certainty) >= conf.tag_certainty_threshold}
-                if certain_tags: number_of_songs_with_tags+=1
+                certain_tags = {standardize_tag(tag) for tag,certainty in song_data['tags'] if
+                                int(certainty) >= conf.tag_certainty_threshold}
+                if certain_tags:
+                    number_of_songs_with_tags += 1
                 average_tags_per_song += len(certain_tags)
-                yield (song_data['title'],song_data['artist']),certain_tags
+                yield (song_data['title'], song_data['artist']), certain_tags
             if not number_of_songs % 5000:
                 print "songs_read=", number_of_songs, "time taken=", datetime.timedelta(
                     seconds=(time.time() - batch_start_time))
                 batch_start_time = time.time()
-            #delete files already read (helps with re-runs because of errors, but be aware of it!)
-            os.remove(os.path.join(root,song_file_path))
+            # delete files already read (helps with re-runs because of errors, but be aware of it!)
+            os.remove(os.path.join(root, song_file_path))
     average_tags_per_song /= float(number_of_songs)
-    print ("number of songs = {0}\nnumber of songs with tags = {1}\naverage number "\
-        + " of tags per song = {2}").format(number_of_songs,number_of_songs_with_tags,\
-                                       average_tags_per_song)    
+    print ("number of songs = {0}\nnumber of songs with tags = {1}\naverage number " +
+           " of tags per song = {2}").format(number_of_songs, number_of_songs_with_tags,
+                                             average_tags_per_song)
 
 
 def update_database_with_last_fm_tags():
+    conn = MySQLdb.connect()
+    cur = conn.cursor()
+    # itereate over songs and tags on last.fm iterator
     for (title, artist), tags in last_fm_tags_iterator():
-        #chords go through Chord_index
-        song, created = Song.objects.get_or_create(title=title, artist=artist)
-        #if tag already exists for song (including song appearing twice on last.fm), addition does nothing.
-        tags=[Tag.objects.get_or_create(name=tag)[0] for tag in tags]
-        for tag in tags: song.tags.add(tag)
-        #when fails, there's some rollback problem
-        song.save()
+        # check if song exists, if not add to database and get id.
+        if not cur.execute("SELECT (1) FROM song_table WHERE title = %s AND artist = %s LIMIT 1", (title, artist)):
+            cur.execute("INSERT INTO song_table(artist,failed_scrape_attempts,title) VALUES(%s,%s,%s)", (artist, 0, title))
+        cur.execute("SELECT song_id FROM song_table WHERE title = %s AND artist = %s LIMIT 1", (title, artist))
+        song_id = cur.fetchone()[0]
+        # if tag already exists for song (including song appearing twice on last.fm), addition does nothing.
+        # check if tags exists, if not add to database and get id.
+        for tag in tags:
+            if not cur.execute("SELECT (1) FROM tag_table WHERE tag_name = %s LIMIT 1", tag):
+                cur.execute("INSERT INTO tag_table(tag_name) VALUES(%s)", tag)
+            cur.execute("SELECT song_id FROM tag_table WHERE tag_name = %s LIMIT 1", tag)
+            tag_id = cur.fetchone()[0]
+            # if song-tag connection doesnt exist add to database
+            if not cur.execute("SELECT (1) FROM song_tag_table WHERE tag_id = %s AND song_id = %s LIMIT 1", (tag_id, song_id)):
+                cur.execute("INSERT INTO song_tag_table(tag_id, song_id) VALUES(%s,%s)", (tag_id, song_id))
+        conn.commit()
     print 'done updating database'
     
-#management.call_command('syncdb', verbosity=0, interactive=False)
-#management.call_command('flush', verbosity=0, interactive=False)
-print "tag number: " + str(Tag.objects.all().distinct().count())
-print 'song number: ' + str(Song.objects.all().distinct().count())
-print "number of songXtag couples: " + str(Song.objects.filter(tags__isnull=False).count())
+# management.call_command('syncdb', verbosity=0, interactive=False)
+# management.call_command('flush', verbosity=0, interactive=False)
+# print "tag number: " + str(Tag.objects.all().distinct().count())
+# print 'song number: ' + str(Song.objects.all().distinct().count())
+# print "number of songXtag couples: " + str(Song.objects.filter(tags__isnull=False).count())
 
 #for tag in Tag.objects.all(): tag.delete()
 update_database_with_last_fm_tags()
